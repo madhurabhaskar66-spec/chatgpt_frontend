@@ -61,28 +61,28 @@ const Signup = () => {
                 <div className="bg-white py-8 px-4 shadow-xl border border-gray-100 sm:rounded-2xl sm:px-10">
                     <form className="space-y-6" onSubmit={handleSubmit}>
                         <div>
-                            <label className="block text-sm font-semibold text-gray-700">Email address</label>
+                            <label className="block text-sm font-semibold text-black">Email address</label>
                             <div className="mt-1">
                                 <input
                                     name="email"
                                     type="email"
                                     required
                                     placeholder="you@example.com"
-                                    className="appearance-none block w-full px-3 py-3 border border-gray-300 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                                    className="appearance-none block w-full px-3 py-3 border border-gray-300 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-black"
                                     onChange={handleChange}
                                 />
                             </div>
                         </div>
 
                         <div>
-                            <label className="block text-sm font-semibold text-gray-700">Password</label>
+                            <label className="block text-sm font-semibold text-black">Password</label>
                             <div className="mt-1">
                                 <input
                                     name="password"
                                     type="password"
                                     required
                                     placeholder="••••••••"
-                                    className="appearance-none block w-full px-3 py-3 border border-gray-300 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                                    className="appearance-none block w-full px-3 py-3 border border-gray-300 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-black"
                                     onChange={handleChange}
                                 />
                             </div>
@@ -111,7 +111,7 @@ const Signup = () => {
                                 <div className="w-full border-t border-gray-300"></div>
                             </div>
                             <div className="relative flex justify-center text-sm">
-                                <span className="px-2 bg-white text-gray-500">Or continue with</span>
+                                <span className="px-2 bg-white text-black font-medium">Or continue with</span>
                             </div>
                         </div>
 

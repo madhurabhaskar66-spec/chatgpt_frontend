@@ -1,270 +1,430 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 
 const Dashboard = () => {
     const navigate = useNavigate();
+    const messagesEndRef = useRef(null);
+
     const [user, setUser] = useState(null);
-    const [messages, setMessages] = useState([]);
-    const [input, setInput] = useState('');
+    const [input, setInput] = useState("");
     const [loading, setLoading] = useState(false);
     const [sidebarOpen, setSidebarOpen] = useState(true);
-    const [chatHistory, setChatHistory] = useState([
-        { id: 1, title: 'Welcome Chat', date: 'Today' },
+    const [searchTerm, setSearchTerm] = useState("");
+
+    // 🔥 New Chat Architecture
+    const [chats, setChats] = useState([
+        { id: 1, title: "Welcome Chat", date: "Today", messages: [], loaded: true }
     ]);
 
-    useEffect(() => {
-        const token = localStorage.getItem('access_token');
-        if (!token) {
-            navigate('/login');
-        } else {
-            setUser({ email: 'User' });
-        }
-    }, [navigate]);
+    const [activeChatId, setActiveChatId] = useState(1);
+    const [groups, setGroups] = useState([]);
 
+    const activeChat = chats.find(chat => chat.id === activeChatId);
+
+    // Auto scroll to bottom
+    useEffect(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }, [activeChat?.messages, loading]);
+
+    // Auth check
+    useEffect(() => {
+        const token = localStorage.getItem("access_token");
+        if (token) {
+            setUser({ email: localStorage.getItem("user_email") || "User" });
+            fetchConversations(token);
+            fetchGroups();
+        }
+    }, []);
+
+    const fetchConversations = async (token) => {
+        try {
+            const response = await fetch("http://127.0.0.1:8000/conversations", {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            if (response.ok) {
+                const data = await response.json();
+                if (data.length > 0) {
+                    const savedChats = data.map(conv => ({
+                        id: conv.id,
+                        title: conv.title,
+                        date: "Past",
+                        messages: [],
+                        loaded: false
+                    }));
+                    setChats(prev => {
+                        const welcome = prev.find(c => c.id === 1);
+                        return welcome ? [welcome, ...savedChats] : savedChats;
+                    });
+                }
+            }
+        } catch (err) {
+            console.error("Failed to fetch conversations:", err);
+        }
+    };
+
+    const fetchConversationMessages = async (convId) => {
+        const token = localStorage.getItem("access_token");
+        if (!token) return;
+
+        try {
+            const res = await fetch(`http://127.0.0.1:8000/conversations/${convId}/messages`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (res.ok) {
+                const data = await res.json();
+                const formattedMessages = data.flatMap(m => [
+                    { role: "user", content: m.user_message },
+                    { role: "assistant", content: m.ai_response }
+                ]);
+                setChats(prev => prev.map(chat =>
+                    chat.id === convId ? { ...chat, messages: formattedMessages, loaded: true } : chat
+                ));
+            }
+        } catch (err) {
+            console.error("Failed to fetch messages:", err);
+        }
+    };
+
+    const fetchGroups = async () => {
+        try {
+            const res = await fetch("http://127.0.0.1:8000/groups");
+            if (res.ok) {
+                const data = await res.json();
+                setGroups(data);
+            }
+        } catch (err) {
+            console.error("Failed to fetch groups:", err);
+        }
+    };
+
+    const handleCreateGroup = async () => {
+        const name = prompt("Enter group name:");
+        if (!name) return;
+
+        try {
+            const res = await fetch("http://127.0.0.1:8000/groups", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name })
+            });
+
+            if (res.ok) {
+                fetchGroups();
+            }
+        } catch (err) {
+            console.error("Failed to create group:", err);
+        }
+    };
+
+    // Handle switching chat
+    const switchChat = (chatId) => {
+        setActiveChatId(chatId);
+        const chat = chats.find(c => c.id === chatId);
+        if (chat && !chat.loaded && chat.id !== 1 && typeof chat.id === 'number') {
+            fetchConversationMessages(chatId);
+        }
+    };
+
+    // Send Message
     const handleSendMessage = async (e) => {
         e.preventDefault();
         if (!input.trim()) return;
 
-        const userMessage = { role: 'user', content: input };
-        setMessages((prev) => [...prev, userMessage]);
-        setInput('');
+        const currentChatId = activeChatId;
+        const userMessage = { role: "user", content: input };
+        const currentInput = input;
+        setInput("");
         setLoading(true);
 
+        // Add user message to active chat
+        setChats(prev =>
+            prev.map(chat => {
+                if (chat.id === currentChatId) {
+                    const isFirstMessage = chat.messages.length === 0;
+                    return {
+                        ...chat,
+                        title: isFirstMessage ? currentInput.slice(0, 25) : chat.title,
+                        messages: [...chat.messages, userMessage]
+                    };
+                }
+                return chat;
+            })
+        );
+
         try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch('http://127.0.0.1:8000/chat', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${token}`,
-                },
-                body: JSON.stringify({ message: input }),
+            const token = localStorage.getItem("access_token");
+            const headers = { "Content-Type": "application/json" };
+            if (token) {
+                headers["Authorization"] = `Bearer ${token}`;
+            }
+
+            const body = { message: currentInput };
+            if (typeof currentChatId === 'number' && currentChatId !== 1) {
+                body.conversation_id = currentChatId;
+            }
+
+            const response = await fetch("http://127.0.0.1:8000/chat", {
+                method: "POST",
+                headers: headers,
+                body: JSON.stringify(body),
             });
 
             const data = await response.json();
+            const assistantMessage = {
+                role: "assistant",
+                content: data.response || data.message || "No response"
+            };
 
-            if (response.ok) {
-                setMessages((prev) => [
-                    ...prev,
-                    { role: 'assistant', content: data.response || data.message },
-                ]);
-            } else {
-                setMessages((prev) => [
-                    ...prev,
-                    { role: 'assistant', content: 'Sorry, something went wrong. Please try again.' },
-                ]);
-            }
+            setChats(prev =>
+                prev.map(chat => {
+                    if (chat.id === currentChatId) {
+                        const updated = { ...chat, messages: [...chat.messages, assistantMessage] };
+                        if (data.conversation_id && (chat.id === 1 || typeof chat.id !== 'number')) {
+                            updated.id = data.conversation_id;
+                            updated.loaded = true;
+                            if (activeChatId === currentChatId) setActiveChatId(data.conversation_id);
+                        }
+                        return updated;
+                    }
+                    return chat;
+                })
+            );
+
         } catch (err) {
-            setMessages((prev) => [
-                ...prev,
-                { role: 'assistant', content: 'Unable to connect to the server.' },
-            ]);
+            const errorMessage = {
+                role: "assistant",
+                content: "Unable to connect to the server."
+            };
+
+            setChats(prev =>
+                prev.map(chat =>
+                    chat.id === currentChatId
+                        ? { ...chat, messages: [...chat.messages, errorMessage] }
+                        : chat
+                )
+            );
         } finally {
             setLoading(false);
         }
     };
 
-    const handleLogout = () => {
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('refresh_token');
-        localStorage.removeItem('token_type');
-        navigate('/login');
+    // New Chat
+    const handleNewChat = () => {
+        const newChat = {
+            id: Date.now(),
+            title: "New Chat",
+            date: "Today",
+            messages: []
+        };
+
+        setChats(prev => [newChat, ...prev]);
+        setActiveChatId(newChat.id);
     };
 
-    const handleNewChat = () => {
-        setMessages([]);
-        setChatHistory((prev) => [
-            { id: Date.now(), title: 'New Chat', date: 'Today' },
-            ...prev,
-        ]);
+    // Logout
+    const handleLogout = () => {
+        localStorage.clear();
+        navigate("/login");
     };
+
+    // Delete Chat
+    const handleDeleteChat = async (chatId, e) => {
+        if (e) e.stopPropagation();
+        if (!window.confirm("Delete this chat?")) return;
+
+        try {
+            const token = localStorage.getItem("access_token");
+            const res = await fetch(`http://127.0.0.1:8000/conversations/${chatId}`, {
+                method: "DELETE",
+                headers: {
+                    Authorization: `Bearer ${token}`
+                }
+            });
+
+            if (res.ok) {
+                setChats(prev => prev.filter(c => c.id !== chatId));
+                if (activeChatId === chatId) {
+                    setActiveChatId(chats[0]?.id || null);
+                }
+            }
+        } catch (err) {
+            console.error("Failed to delete chat:", err);
+        }
+    };
+
+    // Filtered chats
+    const filteredChats = chats.filter(chat =>
+        chat.title.toLowerCase().includes(searchTerm.toLowerCase())
+    );
 
     return (
         <div className="flex h-screen bg-gray-900 text-white overflow-hidden">
+
             {/* Sidebar */}
-            <div
-                className={`${sidebarOpen ? 'w-64' : 'w-0'
-                    } bg-gray-950 transition-all duration-300 overflow-hidden flex flex-col`}
-            >
-                {/* New Chat Button */}
+            <div className={`${sidebarOpen ? "w-64" : "w-0"} bg-gray-950 transition-all duration-300 overflow-hidden flex flex-col`}>
+
                 <div className="p-3">
                     <button
                         onClick={handleNewChat}
-                        className="w-full flex items-center gap-2 px-4 py-3 rounded-lg border border-gray-700 hover:bg-gray-800 transition text-sm font-medium"
+                        className="w-full px-4 py-3 rounded-lg border border-gray-700 hover:bg-gray-800 transition text-sm font-medium"
                     >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
-                        </svg>
-                        New Chat
+                        + New Chat
                     </button>
                 </div>
 
-                {/* Chat History */}
-                <div className="flex-1 overflow-y-auto px-3 space-y-1">
-                    <p className="text-xs text-gray-500 uppercase tracking-wider px-2 py-2 font-semibold">
-                        Recent
-                    </p>
-                    {chatHistory.map((chat) => (
-                        <button
-                            key={chat.id}
-                            className="w-full text-left px-3 py-2.5 rounded-lg text-sm text-gray-300 hover:bg-gray-800 transition truncate"
-                        >
-                            {chat.title}
-                        </button>
-                    ))}
+                <div className="px-3">
+                    <input
+                        type="text"
+                        placeholder="Search chats..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="w-full mb-3 px-3 py-2 rounded-lg bg-gray-800 text-sm outline-none"
+                    />
                 </div>
 
-                {/* User Section */}
-                <div className="p-3 border-t border-gray-800">
-                    <div className="flex items-center gap-3 px-3 py-2">
-                        <div className="w-8 h-8 bg-indigo-600 rounded-full flex items-center justify-center text-sm font-bold">
-                            U
-                        </div>
-                        <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium truncate">{user?.email || 'User'}</p>
-                        </div>
-                        <button
-                            onClick={handleLogout}
-                            className="text-gray-400 hover:text-red-400 transition"
-                            title="Logout"
+                <div className="flex-1 overflow-y-auto px-3 space-y-1">
+                    <p className="text-xs text-gray-500 uppercase px-2 py-2 font-semibold">
+                        Recent
+                    </p>
+
+                    {filteredChats.map(chat => (
+                        <div
+                            key={chat.id}
+                            className={`group w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition cursor-pointer
+                                ${activeChatId === chat.id
+                                    ? "bg-gray-800 text-white"
+                                    : "text-gray-300 hover:bg-gray-800"
+                                }`}
+                            onClick={() => switchChat(chat.id)}
                         >
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                            </svg>
-                        </button>
+                            <span className="truncate flex-1">{chat.title}</span>
+                            <button
+                                onClick={(e) => handleDeleteChat(chat.id, e)}
+                                className="opacity-0 group-hover:opacity-100 hover:text-red-500 transition px-1"
+                            >
+                                🗑️
+                            </button>
+                        </div>
+                    ))}
+
+                    <div className="pt-4">
+                        <p className="text-xs text-gray-500 uppercase px-2 py-2 font-semibold">
+                            Group Chats 👥
+                        </p>
+                        <div className="px-2 space-y-1">
+                            <button
+                                onClick={handleCreateGroup}
+                                className="w-full text-left text-xs text-gray-400 hover:text-white transition"
+                            >
+                                + Create Group
+                            </button>
+                            {/* Group list could go here */}
+                            {groups.map(group => (
+                                <button
+                                    key={group.id}
+                                    onClick={() => navigate(`/groups/${group.id}`)}
+                                    className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-300 hover:bg-gray-800 truncate"
+                                >
+                                    # {group.name}
+                                </button>
+                            ))}
+                        </div>
                     </div>
+                </div>
+
+                <div className="p-3 border-t border-gray-800 flex items-center justify-between">
+                    <span className="text-sm truncate">{user?.email}</span>
+                    <button
+                        onClick={handleLogout}
+                        className="text-red-400 text-sm"
+                    >
+                        Logout
+                    </button>
                 </div>
             </div>
 
             {/* Main Content */}
             <div className="flex-1 flex flex-col">
-                {/* Top Bar */}
+
+                {/* Header */}
                 <header className="flex items-center justify-between px-4 py-3 border-b border-gray-800 bg-gray-900">
                     <div className="flex items-center gap-3">
                         <button
                             onClick={() => setSidebarOpen(!sidebarOpen)}
-                            className="p-2 rounded-lg hover:bg-gray-800 transition"
+                            className="p-2 rounded-lg hover:bg-gray-800"
                         >
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
-                            </svg>
+                            ☰
                         </button>
                         <h1 className="text-lg font-semibold">ChatGPT</h1>
                     </div>
-                    <div className="flex items-center gap-2">
-                        <span className="text-xs text-gray-400 bg-gray-800 px-3 py-1 rounded-full">
-                            GPT-4
-                        </span>
-                    </div>
+                    <span className="text-xs bg-gray-800 px-3 py-1 rounded-full">
+                        GPT-4
+                    </span>
                 </header>
 
-                {/* Messages Area */}
+                {/* Messages */}
                 <div className="flex-1 overflow-y-auto px-4 py-6">
-                    {messages.length === 0 ? (
+                    {!activeChat?.messages.length ? (
                         <div className="flex flex-col items-center justify-center h-full text-center">
-                            <div className="bg-gray-800 p-4 rounded-2xl mb-6">
-                                <svg className="w-10 h-10 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-                                </svg>
-                            </div>
-                            <h2 className="text-2xl font-semibold mb-2">What can I help with?</h2>
-                            <p className="text-gray-400 text-sm max-w-md">
-                                Ask me anything — from writing code, brainstorming ideas, learning new topics, and much more.
+                            <h2 className="text-2xl font-semibold mb-2">
+                                What can I help with?
+                            </h2>
+                            <p className="text-gray-400 text-sm">
+                                Ask me anything — writing, coding, ideas and more.
                             </p>
-
-                            {/* Quick Action Cards */}
-                            <div className="grid grid-cols-2 gap-3 mt-8 max-w-lg w-full">
-                                {[
-                                    { icon: '✍️', label: 'Write', desc: 'Essays, emails, stories' },
-                                    { icon: '💡', label: 'Brainstorm', desc: 'Ideas & strategies' },
-                                    { icon: '📊', label: 'Analyze', desc: 'Data & documents' },
-                                    { icon: '💻', label: 'Code', desc: 'Debug & build' },
-                                ].map((item) => (
-                                    <button
-                                        key={item.label}
-                                        onClick={() => setInput(`Help me ${item.label.toLowerCase()}`)}
-                                        className="flex items-center gap-3 p-4 rounded-xl border border-gray-700 hover:bg-gray-800 hover:border-gray-600 transition text-left"
-                                    >
-                                        <span className="text-xl">{item.icon}</span>
-                                        <div>
-                                            <p className="text-sm font-medium">{item.label}</p>
-                                            <p className="text-xs text-gray-500">{item.desc}</p>
-                                        </div>
-                                    </button>
-                                ))}
-                            </div>
                         </div>
                     ) : (
                         <div className="max-w-3xl mx-auto space-y-6">
-                            {messages.map((msg, index) => (
+                            {activeChat.messages.map((msg, index) => (
                                 <div
                                     key={index}
-                                    className={`flex gap-4 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                                    className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
                                 >
-                                    {msg.role === 'assistant' && (
-                                        <div className="w-8 h-8 bg-indigo-600 rounded-full flex items-center justify-center flex-shrink-0 mt-1">
-                                            <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                                            </svg>
-                                        </div>
-                                    )}
                                     <div
-                                        className={`max-w-xl px-4 py-3 rounded-2xl text-sm leading-relaxed ${msg.role === 'user'
-                                                ? 'bg-indigo-600 text-white rounded-br-md'
-                                                : 'bg-gray-800 text-gray-200 rounded-bl-md'
+                                        className={`max-w-xl px-4 py-3 rounded-2xl text-sm
+                                            ${msg.role === "user"
+                                                ? "bg-indigo-600 text-white"
+                                                : "bg-gray-800 text-gray-200"
                                             }`}
                                     >
                                         {msg.content}
                                     </div>
                                 </div>
                             ))}
+
                             {loading && (
-                                <div className="flex gap-4">
-                                    <div className="w-8 h-8 bg-indigo-600 rounded-full flex items-center justify-center flex-shrink-0">
-                                        <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                                        </svg>
-                                    </div>
-                                    <div className="bg-gray-800 px-4 py-3 rounded-2xl rounded-bl-md">
-                                        <div className="flex space-x-1.5">
-                                            <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                                            <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                                            <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-                                        </div>
-                                    </div>
+                                <div className="text-gray-400 text-sm">
+                                    Thinking...
                                 </div>
                             )}
+
+                            <div ref={messagesEndRef} />
                         </div>
                     )}
                 </div>
 
-                {/* Input Area */}
-                <div className="px-4 pb-4 pt-2">
+                {/* Input */}
+                <div className="px-4 pb-4">
                     <form
                         onSubmit={handleSendMessage}
-                        className="max-w-3xl mx-auto flex items-center gap-3 bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3 focus-within:border-indigo-500 transition"
+                        className="max-w-3xl mx-auto flex items-center gap-3 bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3"
                     >
                         <input
                             type="text"
                             value={input}
                             onChange={(e) => setInput(e.target.value)}
                             placeholder="Message ChatGPT..."
-                            className="flex-1 bg-transparent outline-none text-sm text-white placeholder-gray-500"
+                            className="flex-1 bg-transparent outline-none text-sm"
                             disabled={loading}
                         />
                         <button
                             type="submit"
                             disabled={loading || !input.trim()}
-                            className="p-2 bg-indigo-600 rounded-lg hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                            className="px-4 py-2 bg-indigo-600 rounded-lg disabled:opacity-40"
                         >
-                            <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 12h14M12 5l7 7-7 7" />
-                            </svg>
+                            Send
                         </button>
                     </form>
-                    <p className="text-center text-xs text-gray-600 mt-2">
-                        ChatGPT can make mistakes. Check important info.
-                    </p>
                 </div>
             </div>
         </div>
